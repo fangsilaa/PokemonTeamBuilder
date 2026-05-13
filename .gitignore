@@ -1,0 +1,39 @@
+# Environment
+.env
+
+# API response cache (regenerated automatically on first run)
+cache/
+
+# Saved teams (personal data)
+teams.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# Exported files
+*.pdf
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo

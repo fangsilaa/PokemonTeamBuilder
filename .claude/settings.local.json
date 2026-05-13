@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(pip install --user fpdf2 --quiet)",
+      "Bash(Get-ChildItem \"C:\\\\Users\\\\jason\\\\Projects\\\\PokemonAPI\")"
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+streamlit
+requests
+anthropic
+plotly
+pillow
+pandas
+python-dotenv
+fpdf2
