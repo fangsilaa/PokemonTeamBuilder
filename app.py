@@ -4,7 +4,9 @@ import plotly.graph_objects as go
 from dotenv import load_dotenv
 load_dotenv()
 
-from api import get_pokemon, get_type, get_move, get_all_pokemon_names
+from api import (get_pokemon, get_type, get_move, get_all_pokemon_names,
+                 get_smogon_moveset, get_smogon_format_meta,
+                 SINGLES_FORMATS, DOUBLES_FORMATS)
 from team import analyze_team
 from advisor import get_team_advice
 from type_chart import build_type_chart, get_defensive_profile
@@ -38,7 +40,8 @@ for key, default in [
     ("team", []), ("type_chart", None), ("analysis", {}),
     ("claude_advice", ""), ("prev_team_names", []), ("pending_remove", None),
     ("all_names", None), ("select_key", 0), ("stat_overrides", {}),
-    ("moveset_cache", {}), ("rec_cache", []), ("saved_teams", None), ("loaded_team_name", None),
+    ("moveset_cache", {}), ("rec_cache", []), ("saved_teams", None),
+    ("loaded_team_name", None), ("format_mode", "Singles"),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -81,7 +84,8 @@ def render_team_slot(pokemon: dict | None, idx: int):
         bst_display = f"BST {effective_bst} <span style='opacity:0.4;font-size:0.9em'>(custom)</span>" if overrides else f"BST {api_bst}"
         types_html = "".join(type_badge(slot["type"]["name"]) for slot in pokemon["types"])
         sprites = pokemon.get("sprites", {})
-        static = sprites.get("front_default", "")
+        static = (sprites.get("front_default")
+                  or sprites.get("other", {}).get("official-artwork", {}).get("front_default", ""))
         showdown = f"https://play.pokemonshowdown.com/sprites/ani/{pokemon['name']}.gif"
 
         st.markdown(
@@ -92,7 +96,7 @@ def render_team_slot(pokemon: dict | None, idx: int):
             f"    <div style='font-size:0.72em;opacity:0.55'>{bst_display}</div>"
             f"  </div>"
             f"  <div style='width:90px;height:{SLOT_HEIGHT}px;flex-shrink:0;display:flex;align-items:center;justify-content:center'>"
-            f"    <img src='{showdown}' onerror=\"this.src='{static}'\" style='max-width:90px;max-height:{SLOT_HEIGHT}px;object-fit:contain'>"
+            f"    <img src='{showdown}' onerror=\"this.onerror=null;this.src='{static}'\" style='max-width:90px;max-height:{SLOT_HEIGHT}px;object-fit:contain'>"
             f"  </div>"
             f"</div>",
             unsafe_allow_html=True,
@@ -393,9 +397,114 @@ def get_recommendations(team: list[dict], analysis: dict, n: int = 4) -> list[di
     return top
 
 
+def get_smogon_recommendations(team: list[dict], analysis: dict, format_mode: str, n: int = 4) -> list[dict]:
+    import math
+    formats = SINGLES_FORMATS[:3] if format_mode == "Singles" else DOUBLES_FORMATS
+
+    # Merge meta across top formats (first format wins for duplicates)
+    meta: dict[str, dict] = {}
+    for fmt in formats:
+        with st.spinner(f"Loading {fmt} competitive data…"):
+            fmt_meta = get_smogon_format_meta(fmt)
+        for name, data in fmt_meta.items():
+            if name not in meta:
+                meta[name] = data
+        if len(meta) >= 150:
+            break
+
+    if not meta:
+        return get_recommendations(team, analysis, n)
+
+    current_names = {p["name"] for p in team}
+    chart = build_type_chart()
+    weakness_counts = analysis.get("weakness_counts", {})
+    critical = [t for t, c in weakness_counts.items() if c >= 3]
+    notable = [t for t, c in weakness_counts.items() if c >= 2]
+    stab_types = {slot["type"]["name"] for p in team for slot in p["types"]}
+    covered = {d for st_type in stab_types for d, m in chart[st_type].items() if m >= 2.0}
+    gaps = [t for t in ALL_TYPES if t not in covered]
+
+    # Teammate synergy: sum teammate co-occurrence rates across current team members
+    synergy: dict[str, float] = {}
+    for pokemon in team:
+        for teammate, rate in meta.get(pokemon["name"], {}).get("teammates", {}).items():
+            if teammate not in current_names:
+                synergy[teammate] = synergy.get(teammate, 0) + rate
+
+    # Pre-score without fetching Pokémon data — limits expensive API calls
+    pre_scored = []
+    for candidate, cdata in meta.items():
+        if candidate in current_names:
+            continue
+        usage = cdata.get("usage", 0)
+        pre = synergy.get(candidate, 0) * 10 + math.log1p(usage * 100) * 0.5
+        pre_scored.append((candidate, pre))
+    pre_scored.sort(key=lambda x: -x[1])
+
+    # Fully score top candidates only
+    results = []
+    for candidate, _ in pre_scored[:50]:
+        pdata = get_pokemon(candidate)
+        if pdata is None:
+            continue
+
+        poke_types = [slot["type"]["name"] for slot in pdata["types"]]
+        profile = get_defensive_profile(poke_types)
+        bst = sum(s["base_stat"] for s in pdata["stats"])
+        usage = meta[candidate].get("usage", 0)
+
+        score = synergy.get(candidate, 0) * 10 + math.log1p(usage * 100) * 0.5
+        resists, covers = [], []
+
+        for weak in critical:
+            if profile.get(weak, 1.0) <= 0.5:
+                score += 3
+                resists.append(weak)
+        for weak in notable:
+            if profile.get(weak, 1.0) <= 0.5:
+                score += 1
+                if weak not in resists:
+                    resists.append(weak)
+        for gap in gaps:
+            for pt in poke_types:
+                if chart[pt].get(gap, 1.0) >= 2.0 and gap not in covers:
+                    score += 2
+                    covers.append(gap)
+
+        results.append({"pokemon": pdata, "score": score, "resists": resists,
+                         "covers": covers, "bst": bst})
+
+    results.sort(key=lambda x: -x["score"])
+    top = results[:n]
+
+    # Swap targets (same logic as rule-based)
+    team_bsts = [_effective_bst(p) for p in team]
+    team_avg_bst = sum(team_bsts) / len(team_bsts) if team_bsts else 500
+    for rec in top:
+        rec_types = [slot["type"]["name"] for slot in rec["pokemon"]["types"]]
+        best_swap, best_swap_score = None, float("-inf")
+        for member in team:
+            m_types = [slot["type"]["name"] for slot in member["types"]]
+            m_profile = get_defensive_profile(m_types)
+            m_bst = _effective_bst(member)
+            if m_bst > rec["bst"] * 1.15:
+                continue
+            swap_score = sum(1 for w in critical if m_profile.get(w, 1.0) > 1.0) * 3
+            swap_score += sum(1 for w in notable if m_profile.get(w, 1.0) > 1.0)
+            if set(m_types) & set(rec_types):
+                swap_score += 2
+            swap_score += 3 if m_bst < team_avg_bst * 0.85 else (1 if m_bst < team_avg_bst else 0)
+            if swap_score > best_swap_score:
+                best_swap_score = swap_score
+                best_swap = member["name"]
+        rec["replace"] = best_swap
+
+    return top
+
+
 def render_recommendations(team: list[dict], analysis: dict):
     with st.spinner("Finding recommendations…"):
-        recs = get_recommendations(team, analysis)
+        recs = get_smogon_recommendations(team, analysis, st.session_state.format_mode)
     st.session_state.rec_cache = recs
 
     if not recs:
@@ -406,7 +515,8 @@ def render_recommendations(team: list[dict], analysis: dict):
     for col, rec in zip(cols, recs):
         pdata = rec["pokemon"]
         sprites = pdata.get("sprites", {})
-        static = sprites.get("front_default", "")
+        static = (sprites.get("front_default")
+                  or sprites.get("other", {}).get("official-artwork", {}).get("front_default", ""))
         showdown = f"https://play.pokemonshowdown.com/sprites/ani/{pdata['name']}.gif"
         types_html = "".join(type_badge(slot["type"]["name"]) for slot in pdata["types"])
         resists_html = "".join(type_badge(t) for t in rec["resists"]) or "<span style='opacity:0.4;font-size:0.72em'>—</span>"
@@ -423,7 +533,7 @@ def render_recommendations(team: list[dict], analysis: dict):
         with col:
             st.markdown(
                 f"<div style='text-align:center'>"
-                f"  <img src='{showdown}' onerror=\"this.src='{static}'\" style='height:72px;object-fit:contain'>"
+                f"  <img src='{showdown}' onerror=\"this.onerror=null;this.src='{static}'\" style='height:72px;object-fit:contain'>"
                 f"  <div style='font-size:0.82em;font-weight:600'>{pdata['name'].capitalize()}</div>"
                 f"  <div style='margin:2px 0'>{types_html}</div>"
                 f"  <div style='font-size:0.68em;opacity:0.55'>BST {rec['bst']}</div>"
@@ -437,104 +547,29 @@ def render_recommendations(team: list[dict], analysis: dict):
             )
 
 
-UTILITY_SCORES = {
-    "stealth-rock": 70, "spikes": 65, "toxic-spikes": 55, "sticky-web": 55,
-    "thunder-wave": 60, "will-o-wisp": 60, "toxic": 58, "glare": 55,
-    "recover": 65, "roost": 65, "synthesis": 62, "moonlight": 62,
-    "slack-off": 65, "soft-boiled": 65, "rest": 50, "milk-drink": 65,
-    "swords-dance": 70, "nasty-plot": 70, "calm-mind": 68,
-    "dragon-dance": 72, "quiver-dance": 72, "bulk-up": 65, "coil": 63,
-    "substitute": 52, "protect": 50, "encore": 55, "taunt": 53,
-    "u-turn": 45, "volt-switch": 45, "flip-turn": 45,
-}
 
+def recommend_moveset(pokemon: dict, format_mode: str = "Singles") -> list[dict]:
+    formats = DOUBLES_FORMATS if format_mode == "Doubles" else SINGLES_FORMATS
+    smogon_names = get_smogon_moveset(pokemon["name"], formats=formats)
+    if not smogon_names:
+        return []
 
-def recommend_moveset(pokemon: dict) -> list[dict]:
-    poke_types = [slot["type"]["name"] for slot in pokemon["types"]]
-    atk = next((s["base_stat"] for s in pokemon["stats"] if s["stat"]["name"] == "attack"), 0)
-    spatk = next((s["base_stat"] for s in pokemon["stats"] if s["stat"]["name"] == "special-attack"), 0)
-    prefer_physical = atk >= spatk
-
-    # Collect learnable move names (level-up, machine, tutor)
-    candidate_names: list[str] = []
-    seen: set[str] = set()
-    for entry in pokemon.get("moves", []):
-        name = entry["move"]["name"]
-        if name in seen:
-            continue
-        methods = {d["move_learn_method"]["name"] for d in entry["version_group_details"]}
-        if methods & {"level-up", "machine", "tutor"}:
-            seen.add(name)
-            candidate_names.append(name)
-
-    scored: list[dict] = []
-    for move_name in candidate_names[:60]:
+    selected: list[dict] = []
+    for move_name in smogon_names:
+        if len(selected) >= 4:
+            break
         data = get_move(move_name)
         if data is None:
             continue
-        power = data.get("power") or 0
-        accuracy = data.get("accuracy") or 100
-        move_type = data["type"]["name"]
-        category = data["damage_class"]["name"]
-
-        if category == "status":
-            base = UTILITY_SCORES.get(move_name, 0)
-            if base == 0:
-                continue  # skip unlisted status moves
-        else:
-            if power == 0:
-                continue
-            base = power
-            if move_type in poke_types:
-                base += 50
-            if category == "physical":
-                base += 20 if prefer_physical else -20
-            else:
-                base += 20 if not prefer_physical else -20
-            if accuracy >= 100:
-                base += 10
-            elif accuracy < 80:
-                base -= 15
-
-        scored.append({"name": move_name, "power": power, "accuracy": accuracy,
-                        "type": move_type, "category": category, "score": base})
-
-    scored.sort(key=lambda x: -x["score"])
-
-    # Split into utility and attacking pools so scores don't compete cross-pool.
-    # Always include the best utility move (if meaningful), then fill with attacking.
-    utility = [m for m in scored if m["category"] == "status"]
-    attacking = [m for m in scored if m["category"] != "status"]
-
-    selected: list[dict] = []
-    used_types: set[str] = set()
-
-    # Guarantee the single best utility move a slot (threshold excludes minor moves)
-    if utility and utility[0]["score"] >= 55:
-        selected.append(utility[0])
-
-    # Fill with attacking moves, preferring type variety
-    for move in attacking:
-        if len(selected) >= 4:
-            break
-        if move["type"] not in used_types:
-            selected.append(move)
-            used_types.add(move["type"])
-
-    # If a slot is still open, consider a second utility move
-    for move in utility[1:]:
-        if len(selected) >= 4:
-            break
-        selected.append(move)
-
-    # Fill any remaining slots with leftover attacking moves
-    for move in attacking:
-        if len(selected) >= 4:
-            break
-        if move not in selected:
-            selected.append(move)
-
-    return selected[:4]
+        selected.append({
+            "name": move_name,
+            "power": data.get("power") or 0,
+            "accuracy": data.get("accuracy") or 100,
+            "type": data["type"]["name"],
+            "category": data["damage_class"]["name"],
+            "score": 0,
+        })
+    return selected
 
 
 def render_movesets(team: list[dict]):
@@ -543,9 +578,12 @@ def render_movesets(team: list[dict]):
     tabs = st.tabs([p["name"].capitalize() for p in team])
     for tab, pokemon in zip(tabs, team):
         with tab:
+            fmt_mode = st.session_state.get("format_mode", "Singles")
             with st.spinner(f"Loading moves for {pokemon['name'].capitalize()}…"):
-                moves = recommend_moveset(pokemon)
+                moves = recommend_moveset(pokemon, format_mode=fmt_mode)
             st.session_state.moveset_cache[pokemon["name"]] = moves
+            if not moves:
+                st.caption(f"No Smogon competitive data found for {pokemon['name'].capitalize()} in {fmt_mode} formats.")
             for move in moves:
                 color = TYPE_COLORS.get(move["type"], "#888")
                 cat_icon = {"physical": "⚔️", "special": "✨", "status": "🔧"}.get(move["category"], "")
@@ -630,6 +668,14 @@ with left:
             st.session_state.team.pop(idx)
         st.session_state.pending_remove = None
         st.session_state.loaded_team_name = None
+
+    fmt_col, sel_col = st.columns([1, 3])
+    with fmt_col:
+        st.session_state.format_mode = st.radio(
+            "Format", ["Singles", "Doubles"],
+            index=0 if st.session_state.format_mode == "Singles" else 1,
+            horizontal=True, label_visibility="collapsed",
+        )
 
     col_sel, col_btn = st.columns([3, 1])
     with col_sel:
@@ -823,7 +869,7 @@ with right:
         st.divider()
 
         if len(team) >= 2:
-            section("Recommended Replacements", "#FFA15A")
+            section(f"Recommended Replacements ({st.session_state.format_mode})", "#FFA15A")
             render_recommendations(team, analysis)
 
         st.divider()
