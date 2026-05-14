@@ -3,7 +3,8 @@
     "allow": [
       "PowerShell(pip install --user fpdf2 --quiet)",
       "Bash(Get-ChildItem \"C:\\\\Users\\\\jason\\\\Projects\\\\PokemonAPI\")",
-      "WebFetch(domain:play.pokemonshowdown.com)"
+      "WebFetch(domain:play.pokemonshowdown.com)",
+      "Bash(python -c ' *)"
     ]
   }
 }
