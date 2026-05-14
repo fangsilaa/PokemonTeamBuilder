@@ -561,8 +561,8 @@ def recommend_moveset(pokemon: dict, format_mode: str = "Singles") -> list[dict]
             "name": move_name,
             "power": data.get("power") or 0,
             "accuracy": data.get("accuracy") or 100,
-            "type": data["type"]["name"],
-            "category": data["damage_class"]["name"],
+            "type": (data.get("type") or {}).get("name", "normal"),
+            "category": (data.get("damage_class") or {}).get("name", "physical"),
             "score": 0,
         })
     return selected
