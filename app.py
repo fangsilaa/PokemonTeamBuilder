@@ -236,7 +236,8 @@ def render_radar_chart(team: list[dict]):
     fig.update_layout(
         polar=dict(
             domain=dict(x=[0.25, 0.95], y=[0.05, 0.95]),
-            radialaxis=dict(visible=True, range=[0, 100]),
+            radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(size=9, color="#4a90d9")),
+            angularaxis=dict(tickfont=dict(size=12, color="white")),
         ),
         showlegend=True,
         legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=0),
@@ -760,7 +761,7 @@ if not st.session_state.get("_share_loaded"):
 st.markdown("## Pokémon Team Builder")
 st.markdown("<div style='margin-bottom:16px'></div>", unsafe_allow_html=True)
 
-left, right = st.columns([4, 6])
+left, _gap, right = st.columns([4, 0.3, 6])
 
 # ── Left column ──────────────────────────────────────────────────────────────
 with left:
