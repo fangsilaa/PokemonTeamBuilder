@@ -6,7 +6,9 @@ load_dotenv()
 
 from api import (get_pokemon, get_type, get_move, get_all_pokemon_names,
                  get_smogon_moveset, get_smogon_format_meta,
-                 SINGLES_FORMATS, DOUBLES_FORMATS)
+                 SINGLES_FORMATS, DOUBLES_FORMATS,
+                 ALL_SINGLES_FORMATS, ALL_DOUBLES_FORMATS,
+                 get_sprite_url)
 from team import analyze_team
 from advisor import get_team_advice
 from type_chart import build_type_chart, get_defensive_profile
@@ -83,10 +85,7 @@ def render_team_slot(pokemon: dict | None, idx: int):
         effective_bst = sum(overrides.get(s, api_stats.get(s, 0)) for s in STAT_ORDER) if overrides else api_bst
         bst_display = f"BST {effective_bst} <span style='opacity:0.4;font-size:0.9em'>(custom)</span>" if overrides else f"BST {api_bst}"
         types_html = "".join(type_badge(slot["type"]["name"]) for slot in pokemon["types"])
-        sprites = pokemon.get("sprites", {})
-        static = (sprites.get("front_default")
-                  or sprites.get("other", {}).get("official-artwork", {}).get("front_default", ""))
-        showdown = f"https://play.pokemonshowdown.com/sprites/ani/{pokemon['name']}.gif"
+        sprite_src = get_sprite_url(pokemon)
 
         st.markdown(
             f"<div style='display:flex;align-items:center;height:{SLOT_HEIGHT}px;gap:6px'>"
@@ -96,7 +95,7 @@ def render_team_slot(pokemon: dict | None, idx: int):
             f"    <div style='font-size:0.72em;opacity:0.55'>{bst_display}</div>"
             f"  </div>"
             f"  <div style='width:90px;height:{SLOT_HEIGHT}px;flex-shrink:0;display:flex;align-items:center;justify-content:center'>"
-            f"    <img src='{showdown}' onerror=\"this.onerror=null;this.src='{static}'\" style='max-width:90px;max-height:{SLOT_HEIGHT}px;object-fit:contain'>"
+            f"    <img src='{sprite_src}' style='max-width:90px;max-height:{SLOT_HEIGHT}px;object-fit:contain'>"
             f"  </div>"
             f"</div>",
             unsafe_allow_html=True,
@@ -514,10 +513,7 @@ def render_recommendations(team: list[dict], analysis: dict):
     cols = st.columns(len(recs))
     for col, rec in zip(cols, recs):
         pdata = rec["pokemon"]
-        sprites = pdata.get("sprites", {})
-        static = (sprites.get("front_default")
-                  or sprites.get("other", {}).get("official-artwork", {}).get("front_default", ""))
-        showdown = f"https://play.pokemonshowdown.com/sprites/ani/{pdata['name']}.gif"
+        sprite_src = get_sprite_url(pdata)
         types_html = "".join(type_badge(slot["type"]["name"]) for slot in pdata["types"])
         resists_html = "".join(type_badge(t) for t in rec["resists"]) or "<span style='opacity:0.4;font-size:0.72em'>—</span>"
         covers_html = "".join(type_badge(t) for t in rec["covers"]) or "<span style='opacity:0.4;font-size:0.72em'>—</span>"
@@ -533,7 +529,7 @@ def render_recommendations(team: list[dict], analysis: dict):
         with col:
             st.markdown(
                 f"<div style='text-align:center'>"
-                f"  <img src='{showdown}' onerror=\"this.onerror=null;this.src='{static}'\" style='height:72px;object-fit:contain'>"
+                f"  <img src='{sprite_src}' style='height:72px;max-width:90px;object-fit:contain'>"
                 f"  <div style='font-size:0.82em;font-weight:600'>{pdata['name'].capitalize()}</div>"
                 f"  <div style='margin:2px 0'>{types_html}</div>"
                 f"  <div style='font-size:0.68em;opacity:0.55'>BST {rec['bst']}</div>"
@@ -549,7 +545,7 @@ def render_recommendations(team: list[dict], analysis: dict):
 
 
 def recommend_moveset(pokemon: dict, format_mode: str = "Singles") -> list[dict]:
-    formats = DOUBLES_FORMATS if format_mode == "Doubles" else SINGLES_FORMATS
+    formats = ALL_DOUBLES_FORMATS if format_mode == "Doubles" else ALL_SINGLES_FORMATS
     smogon_names = get_smogon_moveset(pokemon["name"], formats=formats)
     if not smogon_names:
         return []

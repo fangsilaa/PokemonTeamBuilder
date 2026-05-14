@@ -88,6 +88,28 @@ def get_all_pokemon_names() -> list[str]:
 SINGLES_FORMATS = ["gen9ou", "gen9ubers", "gen9uu", "gen9ru", "gen9nu", "gen9pu", "gen9lc"]
 DOUBLES_FORMATS = ["gen9doublesou", "gen9vgc2024regh", "gen9doublesuu"]
 
+ALL_SINGLES_FORMATS = [
+    "gen9ou", "gen9ubers", "gen9uu", "gen9ru", "gen9nu", "gen9pu", "gen9zu", "gen9lc",
+    "gen8ou", "gen8ubers", "gen8uu", "gen8ru", "gen8nu", "gen8pu", "gen8zu", "gen8lc",
+    "gen7ou", "gen7ubers", "gen7uu", "gen7ru", "gen7nu", "gen7pu", "gen7zu", "gen7lc",
+    "gen6ou", "gen6ubers", "gen6uu", "gen6ru", "gen6nu", "gen6pu", "gen6lc",
+    "gen5ou", "gen5ubers", "gen5uu", "gen5ru", "gen5nu", "gen5pu", "gen5lc",
+    "gen4ou", "gen4ubers", "gen4uu", "gen4nu", "gen4lc",
+    "gen3ou", "gen3ubers", "gen3uu", "gen3nu",
+    "gen2ou", "gen2ubers", "gen2uu",
+    "gen1ou", "gen1ubers",
+]
+
+ALL_DOUBLES_FORMATS = [
+    "gen9doublesou", "gen9vgc2024regh", "gen9doublesuu",
+    "gen8doublesou", "gen8vgc2020",
+    "gen7doublesou", "gen7vgc2017", "gen7vgc2018",
+    "gen6doublesou", "gen6vgc2016",
+    "gen5doublesou",
+    "gen4doublesou",
+    "gen3doublesou",
+]
+
 
 def _smogon_month() -> str:
     """Most recent month Smogon stats are typically published for (~2 months ago)."""
@@ -145,13 +167,14 @@ def _fetch_and_index_chaos(fmt: str, month: str, fmt_tag: str = "singles") -> di
 def get_smogon_moveset(name: str, formats: list[str] | None = None) -> list[str] | None:
     """
     Return top competitive move names (PokeAPI format) from Smogon usage stats.
-    Pass formats=DOUBLES_FORMATS to get doubles-specific moves.
+    Loops through formats newest-to-oldest gen until a moveset with 4+ moves is found.
+    Pass formats=ALL_DOUBLES_FORMATS to get doubles-specific moves.
     Returns None if the Pokémon isn't found in any tracked format.
     """
     if formats is None:
-        formats = SINGLES_FORMATS
+        formats = ALL_SINGLES_FORMATS
 
-    fmt_tag = "doubles" if formats == DOUBLES_FORMATS else "singles"
+    fmt_tag = "doubles" if any("doubles" in f or "vgc" in f for f in formats) else "singles"
     per_poke_key = f"smogon_moves_{fmt_tag}_{name}"
 
     cached = _load_cache(per_poke_key)
@@ -179,6 +202,31 @@ def get_smogon_format_meta(fmt: str) -> dict:
     if cached is not None:
         return cached
     return _fetch_and_index_chaos(fmt, month)
+
+
+def get_sprite_url(pokemon: dict) -> str:
+    """Return best available sprite URL: Showdown animated GIF if it exists, else PokeAPI official artwork."""
+    name = pokemon["name"]
+    key = f"sprite_check_{name}"
+    cached = _load_cache(key)
+    if cached is not None:
+        return cached
+
+    gif_url = f"https://play.pokemonshowdown.com/sprites/ani/{name}.gif"
+    try:
+        r = requests.head(gif_url, timeout=3)
+        if r.status_code == 200:
+            _save_cache(key, gif_url)
+            return gif_url
+    except Exception:
+        pass
+
+    sprites = pokemon.get("sprites", {})
+    static = (sprites.get("front_default")
+              or sprites.get("other", {}).get("official-artwork", {}).get("front_default")
+              or "")
+    _save_cache(key, static)
+    return static
 
 
 def get_pokemon_species(name: str) -> dict | None:
