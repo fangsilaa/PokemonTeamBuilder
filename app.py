@@ -1,4 +1,5 @@
 import random
+import base64
 import streamlit as st
 import plotly.graph_objects as go
 from dotenv import load_dotenv
@@ -124,6 +125,12 @@ MULT_STYLE = {
 def render_weakness_heatmap(team: list[dict]):
     if not team:
         return
+    chart = build_type_chart()
+    _ML = {0.0: "0×", 0.25: "¼×", 0.5: "½×", 1.0: "1×", 2.0: "2×", 4.0: "4×"}
+
+    def _mult_label(m: float) -> str:
+        return _ML.get(m, f"{m}×")
+
     col_w = "34px"
     header_cells = '<th style="min-width:80px;max-width:80px;width:80px"></th>' + "".join(
         f'<th style="width:{col_w};min-width:{col_w};max-width:{col_w};padding:2px 0;'
@@ -146,8 +153,12 @@ def render_weakness_heatmap(team: list[dict]):
         for t in ALL_TYPES:
             val = profile[t]
             style, label = MULT_STYLE.get(val, ("", str(val)))
+            parts = [f"{d.capitalize()}: {_mult_label(chart[t].get(d, 1.0))}" for d in types]
+            tooltip = " | ".join(parts)
+            if len(types) > 1:
+                tooltip += f" → {_mult_label(val)}"
             cells += (
-                f'<td style="width:{col_w};min-width:{col_w};max-width:{col_w};'
+                f'<td title="{tooltip}" style="width:{col_w};min-width:{col_w};max-width:{col_w};'
                 f'text-align:center;font-size:0.68em;padding:2px 0;{style};border-radius:2px">'
                 f'{label}</td>'
             )
@@ -645,9 +656,35 @@ def _load_team_from_record(record: dict) -> tuple[list[dict], dict]:
     return team, record.get("stat_overrides", {})
 
 
+def _encode_share_link(names: list[str]) -> str:
+    import json
+    return base64.urlsafe_b64encode(json.dumps(names).encode()).decode()
+
+
+def _decode_share_link(param: str) -> list[str] | None:
+    import json
+    try:
+        return json.loads(base64.urlsafe_b64decode(param).decode())
+    except Exception:
+        return None
+
+
 # Load saved teams into session state once
 if st.session_state.saved_teams is None:
     st.session_state.saved_teams = _load_teams_from_disk()
+
+# Pre-load team from share link (runs once per session)
+if not st.session_state.get("_share_loaded"):
+    st.session_state._share_loaded = True
+    _tp = st.query_params.get("team")
+    if _tp and not st.session_state.team:
+        _names = _decode_share_link(_tp)
+        if _names:
+            with st.spinner("Loading shared team…"):
+                _loaded, _overrides = _load_team_from_record({"pokemon": _names})
+            st.session_state.team = _loaded
+            st.session_state.stat_overrides = _overrides
+            st.session_state.analysis = analyze_team(_loaded)
 
 
 # ── Header ──────────────────────────────────────────────────────────────────
@@ -773,6 +810,9 @@ with left:
                         st.success(f"Saved as '{save_name}'!")
             if len(saved) >= MAX_TEAMS and save_name not in saved:
                 st.caption(f"Max {MAX_TEAMS} teams reached. Delete one to save a new team.")
+            _share_encoded = _encode_share_link([p["name"] for p in st.session_state.team])
+            st.code(f"https://pokemonteambuilder.streamlit.app/?team={_share_encoded}", language=None)
+            st.caption("Copy this link to share your team.")
         else:
             st.caption("Add Pokémon to your team before saving.")
 
