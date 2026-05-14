@@ -193,7 +193,7 @@ def render_radar_chart(team: list[dict]):
         height=300,
         margin=dict(l=10, r=10, t=10, b=10),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def render_type_profile(team: list[dict], analysis: dict):
@@ -676,14 +676,14 @@ with left:
     col_sel, col_btn = st.columns([3, 1])
     with col_sel:
         selected = st.selectbox(
-            "",
+            " ",
             options=[""] + st.session_state.all_names,
             format_func=lambda x: "Search Pokémon…" if x == "" else x.replace("-", " ").title(),
             label_visibility="collapsed",
             key=f"pokemon_select_{st.session_state.select_key}",
         )
     with col_btn:
-        add_clicked = st.button("Add", use_container_width=True, disabled=len(st.session_state.team) >= 6)
+        add_clicked = st.button("Add", width='stretch', disabled=len(st.session_state.team) >= 6)
 
     if add_clicked and selected:
         if len(st.session_state.team) >= 6:
@@ -699,7 +699,7 @@ with left:
                 st.session_state.select_key += 1
                 st.rerun()
 
-    if st.button("🎲 Random Pokémon", disabled=len(st.session_state.team) >= 6, use_container_width=True):
+    if st.button("🎲 Random Pokémon", disabled=len(st.session_state.team) >= 6, width='stretch'):
         with st.spinner("Picking a random Pokémon…"):
             data = get_pokemon(str(random.randint(1, 1025)))
         if data:
@@ -730,7 +730,7 @@ with left:
 
             col_load, col_del = st.columns(2)
             with col_load:
-                if st.button("Load", use_container_width=True, key="load_team_btn"):
+                if st.button("Load", width='stretch', key="load_team_btn"):
                     with st.spinner(f"Loading {selected_team}…"):
                         loaded, overrides = _load_team_from_record(saved[selected_team])
                     st.session_state.team = loaded
@@ -739,7 +739,7 @@ with left:
                     st.session_state.select_key += 1
                     st.rerun()
             with col_del:
-                if st.button("Delete", use_container_width=True, key="del_team_btn", type="secondary"):
+                if st.button("Delete", width='stretch', key="del_team_btn", type="secondary"):
                     saved.pop(selected_team, None)
                     _save_teams_to_disk(saved)
                     st.rerun()
@@ -747,9 +747,9 @@ with left:
             # Rename
             col_rename, col_rename_btn = st.columns([3, 1])
             with col_rename:
-                new_name = st.text_input("", placeholder="New name…", label_visibility="collapsed", key="rename_input")
+                new_name = st.text_input(" ", placeholder="New name…", label_visibility="collapsed", key="rename_input")
             with col_rename_btn:
-                if st.button("Rename", use_container_width=True, key="rename_btn") and new_name and new_name != selected_team:
+                if st.button("Rename", width='stretch', key="rename_btn") and new_name and new_name != selected_team:
                     if new_name not in saved:
                         saved[new_name] = saved.pop(selected_team)
                         _save_teams_to_disk(saved)
@@ -763,10 +763,10 @@ with left:
         if st.session_state.team:
             col_name, col_save = st.columns([3, 1])
             with col_name:
-                save_name = st.text_input("", placeholder="Team name…", label_visibility="collapsed", key="save_name_input")
+                save_name = st.text_input(" ", placeholder="Team name…", label_visibility="collapsed", key="save_name_input")
             with col_save:
                 can_save = len(saved) < MAX_TEAMS or save_name in saved
-                if st.button("Save", use_container_width=True, key="save_team_btn", disabled=not can_save):
+                if st.button("Save", width='stretch', key="save_team_btn", disabled=not can_save):
                     if save_name:
                         saved[save_name] = _team_to_record(st.session_state.team, st.session_state.stat_overrides)
                         _save_teams_to_disk(saved)
@@ -876,7 +876,7 @@ with right:
         export_col1, export_col2 = st.columns(2)
 
         with export_col1:
-            if st.button("Export as PDF", use_container_width=True):
+            if st.button("Export as PDF", width='stretch'):
                 with st.spinner("Generating PDF…"):
                     try:
                         pdf_bytes = generate_team_pdf(
@@ -892,13 +892,13 @@ with right:
                             data=pdf_bytes,
                             file_name="pokemon_team_report.pdf",
                             mime="application/pdf",
-                            use_container_width=True,
+                            width='stretch',
                         )
                     except Exception as e:
                         st.error(f"PDF generation failed: {e}")
 
         with export_col2:
-            if st.button("Export as HTML", use_container_width=True):
+            if st.button("Export as HTML", width='stretch'):
                 with st.spinner("Generating HTML…"):
                     try:
                         html_str = generate_team_html(
@@ -914,7 +914,7 @@ with right:
                             data=html_str.encode("utf-8"),
                             file_name="pokemon_team_report.html",
                             mime="text/html",
-                            use_container_width=True,
+                            width='stretch',
                         )
                     except Exception as e:
                         st.error(f"HTML generation failed: {e}")
