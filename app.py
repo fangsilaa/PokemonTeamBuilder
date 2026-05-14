@@ -42,7 +42,7 @@ div[data-testid="stHorizontalBlock"] { gap: 0.4rem !important; }
 for key, default in [
     ("team", []), ("type_chart", None), ("analysis", {}),
     ("claude_advice", ""), ("prev_team_names", []), ("pending_remove", None),
-    ("all_names", None), ("select_key", 0), ("stat_overrides", {}),
+    ("all_names", None), ("select_key", 0), ("save_input_key", 0), ("save_toast", None), ("stat_overrides", {}),
     ("moveset_cache", {}), ("rec_cache", []), ("saved_teams", None),
     ("loaded_team_name", None), ("format_mode", "Singles"),
 ]:
@@ -80,20 +80,37 @@ def render_team_slot(pokemon: dict | None, idx: int):
             )
             return
 
+        name = pokemon["name"]
         api_stats = {s["stat"]["name"]: s["base_stat"] for s in pokemon["stats"]}
-        overrides = st.session_state.stat_overrides.get(pokemon["name"], {})
+        # Read live widget values if the custom stats widgets have been rendered before
+        any_widget_exists = any(f"stat_{name}_{s}" in st.session_state for s in STAT_ORDER)
+        if any_widget_exists:
+            overrides = {
+                s: st.session_state[f"stat_{name}_{s}"]
+                for s in STAT_ORDER
+                if f"stat_{name}_{s}" in st.session_state
+                and st.session_state[f"stat_{name}_{s}"] != api_stats.get(s, 0)
+            }
+        else:
+            overrides = st.session_state.stat_overrides.get(name, {})
         api_bst = sum(api_stats.values())
         effective_bst = sum(overrides.get(s, api_stats.get(s, 0)) for s in STAT_ORDER) if overrides else api_bst
         bst_display = f"BST {effective_bst} <span style='opacity:0.4;font-size:0.9em'>(custom)</span>" if overrides else f"BST {api_bst}"
         types_html = "".join(type_badge(slot["type"]["name"]) for slot in pokemon["types"])
         sprite_src = get_sprite_url(pokemon)
+        primary_type = pokemon["types"][0]["type"]["name"]
+        name_color = TYPE_COLORS.get(primary_type, "#888")
+        bst_pct = min(100, round(effective_bst / 720 * 100))
 
         st.markdown(
             f"<div style='display:flex;align-items:center;height:{SLOT_HEIGHT}px;gap:6px'>"
-            f"  <div style='flex:1;min-width:0'>"
+            f"  <div style='flex:1;min-width:0;border-left:3px solid {name_color};padding-left:8px'>"
             f"    <div style='font-size:0.85em;font-weight:600;margin-bottom:2px'>{pokemon['name'].capitalize()}</div>"
-            f"    <div style='margin-bottom:2px'>{types_html}</div>"
-            f"    <div style='font-size:0.72em;opacity:0.55'>{bst_display}</div>"
+            f"    <div style='margin-bottom:4px'>{types_html}</div>"
+            f"    <div style='font-size:0.72em;opacity:0.6;margin-bottom:3px'>{bst_display}</div>"
+            f"    <div style='height:3px;background:rgba(128,128,128,0.18);border-radius:2px'>"
+            f"      <div style='height:3px;background:{name_color};border-radius:2px;width:{bst_pct}%;opacity:0.75'></div>"
+            f"    </div>"
             f"  </div>"
             f"  <div style='width:90px;height:{SLOT_HEIGHT}px;flex-shrink:0;display:flex;align-items:center;justify-content:center'>"
             f"    <img src='{sprite_src}' style='max-width:90px;max-height:{SLOT_HEIGHT}px;object-fit:contain'>"
@@ -101,6 +118,7 @@ def render_team_slot(pokemon: dict | None, idx: int):
             f"</div>",
             unsafe_allow_html=True,
         )
+        st.markdown("<div style='margin-top:25px'></div>", unsafe_allow_html=True)
         if st.button("✕", key=f"remove_{idx}", help="Remove"):
             st.session_state.pending_remove = idx
 
@@ -153,17 +171,38 @@ def render_weakness_heatmap(team: list[dict]):
         for t in ALL_TYPES:
             val = profile[t]
             style, label = MULT_STYLE.get(val, ("", str(val)))
-            parts = [f"{d.capitalize()}: {_mult_label(chart[t].get(d, 1.0))}" for d in types]
-            tooltip = " | ".join(parts)
+            parts = [f"{d.capitalize()} {_mult_label(chart[t].get(d, 1.0))}" for d in types]
+            tooltip = " · ".join(parts)
             if len(types) > 1:
-                tooltip += f" → {_mult_label(val)}"
+                tooltip += f" = {_mult_label(val)}"
             cells += (
-                f'<td title="{tooltip}" style="width:{col_w};min-width:{col_w};max-width:{col_w};'
-                f'text-align:center;font-size:0.68em;padding:2px 0;{style};border-radius:2px">'
-                f'{label}</td>'
+                f'<td style="width:{col_w};min-width:{col_w};max-width:{col_w};'
+                f'text-align:center;font-size:0.68em;padding:2px 0;{style};border-radius:2px;overflow:visible">'
+                f'<span class="hm-cell">{label}'
+                f'<span class="hm-tt">{tooltip}</span>'
+                f'</span></td>'
             )
         body_rows += f"<tr>{cells}</tr>"
     st.markdown(
+        """<style>
+        .hm-cell{position:relative;display:inline-block;width:100%;text-align:center;cursor:default}
+        .hm-tt{
+            visibility:hidden;opacity:0;
+            background:rgba(18,18,18,0.96);color:#f0f0f0;
+            border:1px solid rgba(255,255,255,0.12);
+            border-radius:7px;padding:5px 11px;
+            position:absolute;z-index:9999;
+            bottom:140%;left:50%;transform:translateX(-50%);
+            white-space:nowrap;font-size:11px;font-family:sans-serif;font-weight:500;
+            pointer-events:none;transition:opacity 0.12s ease;
+            box-shadow:0 4px 14px rgba(0,0,0,0.55);
+        }
+        .hm-tt::after{
+            content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);
+            border:5px solid transparent;border-top-color:rgba(18,18,18,0.96);
+        }
+        .hm-cell:hover .hm-tt{visibility:visible;opacity:1}
+        </style>"""
         '<div style="overflow-x:auto">'
         '<table style="border-collapse:separate;border-spacing:1px;width:100%">'
         f"<thead><tr>{header_cells}</tr></thead>"
@@ -531,10 +570,18 @@ def render_recommendations(team: list[dict], analysis: dict):
 
         replace_name = rec.get("replace", "")
         replace_label = (
-            f"<div style='font-size:0.68em;margin-top:5px;padding:2px 6px;"
-            f"background:rgba(255,100,100,0.15);border-radius:4px;display:inline-block'>"
+            f"<div style='font-size:0.67em;margin-top:6px;padding:2px 9px;"
+            f"background:rgba(232,112,112,0.14);border:1px solid rgba(232,112,112,0.32);"
+            f"border-radius:20px;display:inline-block;color:#e87070'>"
             f"Replace <b>{replace_name.capitalize()}</b></div>"
             if replace_name else ""
+        )
+        prim_color = TYPE_COLORS.get(pdata["types"][0]["type"]["name"], "#888")
+        bst_pct = min(100, round(rec["bst"] / 720 * 100))
+        bst_bar = (
+            f"<div style='height:3px;background:rgba(128,128,128,0.18);border-radius:2px;margin:2px 12px 4px'>"
+            f"<div style='height:3px;background:{prim_color};border-radius:2px;width:{bst_pct}%;opacity:0.75'></div>"
+            f"</div>"
         )
 
         with col:
@@ -544,6 +591,7 @@ def render_recommendations(team: list[dict], analysis: dict):
                 f"  <div style='font-size:0.82em;font-weight:600'>{pdata['name'].capitalize()}</div>"
                 f"  <div style='margin:2px 0'>{types_html}</div>"
                 f"  <div style='font-size:0.68em;opacity:0.55'>BST {rec['bst']}</div>"
+                f"  {bst_bar}"
                 f"  {replace_label}"
                 f"  <div style='font-size:0.68em;opacity:0.7;margin-top:4px'>Resists</div>"
                 f"  <div>{resists_html}</div>"
@@ -590,22 +638,43 @@ def render_movesets(team: list[dict]):
                 moves = recommend_moveset(pokemon, format_mode=fmt_mode)
             st.session_state.moveset_cache[pokemon["name"]] = moves
             if not moves:
-                st.caption(f"No Smogon competitive data found for {pokemon['name'].capitalize()} in {fmt_mode} formats.")
+                st.caption(f"No Smogon competitive data found for {pokemon['name'].capitalize()} in {fmt_mode} formats — it may not see competitive play.")
+            elif len(moves) < 4:
+                pass  # note shown after move list
+            _CAT_COLORS = {"physical": "#C03028", "special": "#6890F0", "status": "#7A7A7A"}
             for move in moves:
-                color = TYPE_COLORS.get(move["type"], "#888")
-                cat_icon = {"physical": "⚔️", "special": "✨", "status": "🔧"}.get(move["category"], "")
-                power_str = f"PWR {move['power']}" if move["power"] else "—"
-                acc_str = f"ACC {move['accuracy']}%" if move["accuracy"] else "—"
+                type_color = TYPE_COLORS.get(move["type"], "#888")
+                cat_color = _CAT_COLORS.get(move["category"], "#888")
+                cat_badge = (
+                    f"<span style='background:{cat_color};color:#fff;padding:1px 5px;"
+                    f"border-radius:4px;font-size:0.67em;white-space:nowrap'>{move['category'].capitalize()}</span>"
+                )
+                pill = "background:rgba(128,128,128,0.13);padding:1px 6px;border-radius:4px;font-size:0.68em;white-space:nowrap"
+                power_badge = (
+                    f"<span style='{pill}'>PWR {move['power']}</span>" if move["power"]
+                    else f"<span style='opacity:0.3;font-size:0.68em'>—</span>"
+                )
+                acc_badge = (
+                    f"<span style='{pill}'>ACC {move['accuracy']}%</span>" if move["accuracy"]
+                    else f"<span style='opacity:0.3;font-size:0.68em'>—</span>"
+                )
                 st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:8px;margin-bottom:5px;"
+                    f"<div style='display:flex;align-items:center;gap:7px;margin-bottom:5px;"
                     f"padding:5px 8px;border-radius:5px;background:rgba(128,128,128,0.07)'>"
-                    f"  <span style='background:{color};color:#fff;padding:1px 7px;"
+                    f"  <span style='background:{type_color};color:#fff;padding:1px 7px;"
                     f"border-radius:4px;font-size:0.72em;white-space:nowrap'>{move['type'].capitalize()}</span>"
-                    f"  <span style='font-size:0.82em;font-weight:600;flex:1'>{cat_icon} {move['name'].replace('-', ' ').title()}</span>"
-                    f"  <span style='font-size:0.7em;opacity:0.55'>{power_str}</span>"
-                    f"  <span style='font-size:0.7em;opacity:0.55'>{acc_str}</span>"
+                    f"  {cat_badge}"
+                    f"  <span style='font-size:0.82em;font-weight:600;flex:1'>{move['name'].replace('-', ' ').title()}</span>"
+                    f"  {power_badge}"
+                    f"  {acc_badge}"
                     f"</div>",
                     unsafe_allow_html=True,
+                )
+            if 0 < len(moves) < 4:
+                st.markdown("<div style='margin-top:20px'></div>", unsafe_allow_html=True)
+                st.caption(
+                    f"Only {len(moves)} move(s) found for {pokemon['name'].capitalize()} in {fmt_mode} formats — "
+                    f"it likely has limited competitive usage and may not have a full standard moveset."
                 )
 
 
@@ -759,62 +828,68 @@ with left:
     # ── Saved teams ──────────────────────────────────────────────────────────
     saved = st.session_state.saved_teams
     with st.expander(f"💾 Saved Teams ({len(saved)}/{MAX_TEAMS})", expanded=False):
+        tab_load, tab_save = st.tabs(["Saved", "Save current"])
 
-        if saved:
-            selected_team = st.selectbox(
-                "Saved teams", list(saved.keys()), label_visibility="collapsed", key="saved_team_select"
-            )
-
-            col_load, col_del = st.columns(2)
-            with col_load:
-                if st.button("Load", width='stretch', key="load_team_btn"):
-                    with st.spinner(f"Loading {selected_team}…"):
-                        loaded, overrides = _load_team_from_record(saved[selected_team])
-                    st.session_state.team = loaded
-                    st.session_state.stat_overrides = overrides
-                    st.session_state.loaded_team_name = selected_team
-                    st.session_state.select_key += 1
-                    st.rerun()
-            with col_del:
-                if st.button("Delete", width='stretch', key="del_team_btn", type="secondary"):
-                    saved.pop(selected_team, None)
-                    _save_teams_to_disk(saved)
-                    st.rerun()
-
-            # Rename
-            col_rename, col_rename_btn = st.columns([3, 1])
-            with col_rename:
-                new_name = st.text_input(" ", placeholder="New name…", label_visibility="collapsed", key="rename_input")
-            with col_rename_btn:
-                if st.button("Rename", width='stretch', key="rename_btn") and new_name and new_name != selected_team:
-                    if new_name not in saved:
-                        saved[new_name] = saved.pop(selected_team)
+        with tab_load:
+            if not saved:
+                st.caption("No saved teams yet.")
+            else:
+                selected_team = st.selectbox(
+                    "Saved teams", list(saved.keys()), label_visibility="collapsed", key="saved_team_select"
+                )
+                col_load, col_del = st.columns(2)
+                with col_load:
+                    if st.button("Load", width='stretch', key="load_team_btn"):
+                        with st.spinner(f"Loading {selected_team}…"):
+                            loaded, overrides = _load_team_from_record(saved[selected_team])
+                        st.session_state.team = loaded
+                        st.session_state.stat_overrides = overrides
+                        st.session_state.loaded_team_name = selected_team
+                        st.session_state.select_key += 1
+                        st.rerun()
+                with col_del:
+                    if st.button("Delete", width='stretch', key="del_team_btn", type="secondary"):
+                        saved.pop(selected_team, None)
                         _save_teams_to_disk(saved)
                         st.rerun()
-                    else:
-                        st.warning("Name already exists.")
 
-            st.divider()
+                col_rename, col_rename_btn = st.columns([5, 2])
+                with col_rename:
+                    new_name = st.text_input(" ", placeholder="New name…", label_visibility="collapsed", key="rename_input")
+                with col_rename_btn:
+                    if st.button("Rename", width='stretch', key="rename_btn") and new_name and new_name != selected_team:
+                        if new_name not in saved:
+                            saved[new_name] = saved.pop(selected_team)
+                            _save_teams_to_disk(saved)
+                            st.rerun()
+                        else:
+                            st.warning("Name already exists.")
 
-        # Save current team
-        if st.session_state.team:
-            col_name, col_save = st.columns([3, 1])
-            with col_name:
-                save_name = st.text_input(" ", placeholder="Team name…", label_visibility="collapsed", key="save_name_input")
-            with col_save:
-                can_save = len(saved) < MAX_TEAMS or save_name in saved
-                if st.button("Save", width='stretch', key="save_team_btn", disabled=not can_save):
-                    if save_name:
-                        saved[save_name] = _team_to_record(st.session_state.team, st.session_state.stat_overrides)
-                        _save_teams_to_disk(saved)
-                        st.success(f"Saved as '{save_name}'!")
-            if len(saved) >= MAX_TEAMS and save_name not in saved:
-                st.caption(f"Max {MAX_TEAMS} teams reached. Delete one to save a new team.")
-            _share_encoded = _encode_share_link([p["name"] for p in st.session_state.team])
-            st.code(f"https://pokemonteambuilder.streamlit.app/?team={_share_encoded}", language=None)
-            st.caption("Copy this link to share your team.")
-        else:
-            st.caption("Add Pokémon to your team before saving.")
+        with tab_save:
+            if not st.session_state.team:
+                st.caption("Add Pokémon to your team first.")
+            else:
+                can_save = len(saved) < MAX_TEAMS
+                col_name, col_save = st.columns([5, 2])
+                with col_name:
+                    save_name = st.text_input(" ", placeholder="Team name…", label_visibility="collapsed", key=f"save_name_input_{st.session_state.save_input_key}")
+                with col_save:
+                    if st.button("Save", width='stretch', key="save_team_btn", disabled=not (can_save or save_name in saved)):
+                        if save_name:
+                            saved[save_name] = _team_to_record(st.session_state.team, st.session_state.stat_overrides)
+                            _save_teams_to_disk(saved)
+                            st.session_state.save_input_key += 1
+                            st.session_state.save_toast = f"Saved as '{save_name}'!"
+                            st.rerun()
+                if not can_save and save_name not in saved:
+                    st.caption(f"Max {MAX_TEAMS} teams reached.")
+                _share_encoded = _encode_share_link([p["name"] for p in st.session_state.team])
+                _share_url = f"https://pokemonteambuilder.streamlit.app/?team={_share_encoded}"
+                st.markdown(
+                    f"<a href='{_share_url}' target='_blank' style='font-size:0.75em;opacity:0.65;text-decoration:none'>"
+                    f"🔗 Open share link</a>",
+                    unsafe_allow_html=True,
+                )
 
     STAT_SHORT = {"hp": "HP", "attack": "Atk", "defense": "Def",
                   "special-attack": "SpA", "special-defense": "SpD", "speed": "Spe"}
@@ -827,9 +902,11 @@ with left:
                 api_stats = {s["stat"]["name"]: s["base_stat"] for s in pokemon["stats"]}
                 overrides = st.session_state.stat_overrides.get(name, {})
 
+                prim_type = pokemon["types"][0]["type"]["name"]
+                prim_color = TYPE_COLORS.get(prim_type, "#888")
                 st.markdown(
                     f"<div style='font-size:0.8em;font-weight:700;margin:10px 0 0;"
-                    f"background:rgba(99,110,250,0.15);border-left:3px solid #636EFA;"
+                    f"background:{prim_color}22;border-left:3px solid {prim_color};"
                     f"padding:4px 8px;border-radius:0 4px 4px 0'>{name.capitalize()}</div>"
                     f"<div style='margin-bottom:10px'></div>",
                     unsafe_allow_html=True,
