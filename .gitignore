@@ -1,9 +1,6 @@
 # Environment
 .env
 
-# API response cache (regenerated automatically on first run)
-cache/
-
 # Saved teams (personal data)
 teams.json
 
