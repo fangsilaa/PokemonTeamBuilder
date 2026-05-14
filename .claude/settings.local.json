@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "PowerShell(pip install --user fpdf2 --quiet)",
-      "Bash(Get-ChildItem \"C:\\\\Users\\\\jason\\\\Projects\\\\PokemonAPI\")"
+      "Bash(Get-ChildItem \"C:\\\\Users\\\\jason\\\\Projects\\\\PokemonAPI\")",
+      "WebFetch(domain:play.pokemonshowdown.com)"
     ]
   }
 }

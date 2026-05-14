@@ -204,6 +204,30 @@ def get_smogon_format_meta(fmt: str) -> dict:
     return _fetch_and_index_chaos(fmt, month)
 
 
+# Suffixes that indicate the default form — Showdown uses the bare base name for these
+_DEFAULT_FORM_SUFFIXES = {
+    "single-strike", "altered", "incarnate", "aria", "shield", "average",
+    "confined", "midday", "solo", "amped", "ice", "male", "full-belly",
+    "hero", "ordinary", "red-striped", "plant", "land", "50", "normal",
+}
+
+
+def _showdown_gif_candidates(name: str) -> list[str]:
+    base = "https://play.pokemonshowdown.com/sprites/ani/"
+    candidates = [f"{base}{name}.gif"]
+    if "-" not in name:
+        return candidates
+    base_name, form_suffix = name.split("-", 1)
+    # Compact multi-word suffix: rapid-strike → rapidstrike
+    compact = form_suffix.replace("-", "")
+    if compact != form_suffix:
+        candidates.append(f"{base}{base_name}-{compact}.gif")
+    # Bare base name for known default forms
+    if form_suffix in _DEFAULT_FORM_SUFFIXES:
+        candidates.append(f"{base}{base_name}.gif")
+    return candidates
+
+
 def get_sprite_url(pokemon: dict) -> str:
     """Return best available sprite URL: Showdown animated GIF if it exists, else PokeAPI official artwork."""
     name = pokemon["name"]
@@ -212,14 +236,14 @@ def get_sprite_url(pokemon: dict) -> str:
     if cached is not None:
         return cached
 
-    gif_url = f"https://play.pokemonshowdown.com/sprites/ani/{name}.gif"
-    try:
-        r = requests.head(gif_url, timeout=3)
-        if r.status_code == 200:
-            _save_cache(key, gif_url)
-            return gif_url
-    except Exception:
-        pass
+    for gif_url in _showdown_gif_candidates(name):
+        try:
+            r = requests.head(gif_url, timeout=3)
+            if r.status_code == 200:
+                _save_cache(key, gif_url)
+                return gif_url
+        except Exception:
+            pass
 
     sprites = pokemon.get("sprites", {})
     static = (sprites.get("front_default")
